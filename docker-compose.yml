@@ -1,0 +1,55 @@
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes: [redis:/data]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    volumes: [ollama:/root/.ollama]
+    restart: unless-stopped
+    <<: *gpu
+
+  # Descarga el modelo de traducción una vez y termina.
+  ollama-pull:
+    image: ollama/ollama
+    environment: [OLLAMA_HOST=ollama:11434]
+    entrypoint: ["ollama", "pull", "${TRANSLATE_MODEL:-gemma3:4b}"]
+    depends_on: [ollama]
+    restart: on-failure
+
+  worker:
+    build: { context: ., dockerfile: Dockerfile.worker }
+    ports: ["8001:8001"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      OLLAMA_URL: http://ollama:11434
+      TRANSLATE_MODEL: ${TRANSLATE_MODEL:-gemma3:4b}
+      TARGET_LANG: ${TARGET_LANG:-es}
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER_COMPUTE: ${WHISPER_COMPUTE:-float16}
+      WHISPER_WORKERS: ${WHISPER_WORKERS:-2}
+    volumes: [models:/models]
+    depends_on: [redis, ollama]
+    restart: unless-stopped
+    <<: *gpu
+
+  gateway:
+    build: { context: ., dockerfile: Dockerfile.gateway }
+    ports: ["8000:8000"]
+    environment: [REDIS_URL=redis://redis:6379]
+    depends_on: [redis]
+    restart: unless-stopped
+
+volumes:
+  redis:
+  ollama:
+  models:

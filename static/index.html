@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Salas en vivo</title>
+<style>
+  :root { --bg: #fff; --fg: #111; --muted: #666; --line: #ddd; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0b0b0f; --fg: #eee; --muted: #999; --line: #333; } }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  a { color: inherit; }
+  li { padding: 8px 0; border-bottom: 1px solid var(--line); list-style: none; }
+  ul { padding: 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  input, button { font: inherit; padding: 6px 10px; }
+</style>
+</head>
+<body>
+<h1>Salas</h1>
+<ul id="list"><li class="muted">cargando…</li></ul>
+<h2>Nueva sala</h2>
+<form id="f">
+  <input id="sid" placeholder="sala-1" pattern="[\w-]{1,64}" required>
+  <input id="lang" placeholder="idioma (en, pt…) opcional" size="22">
+  <button>Abrir micrófono</button>
+</form>
+<p class="muted">El micrófono se abre en el worker (puerto 8001). Fuera de localhost el navegador exige HTTPS.</p>
+<script>
+  const mic = (sid, lang) => `${location.protocol}//${location.hostname}:8001/mic/${sid}` + (lang ? `?lang=${lang}` : '');
+  fetch('/api/sessions').then(r => r.json()).then(ss => {
+    const ul = document.getElementById('list');
+    ul.innerHTML = ss.length ? '' : '<li class="muted">No hay salas todavía.</li>';
+    for (const s of ss) {
+      const li = document.createElement('li');
+      li.innerHTML = `<b></b> — <a href="/s/${s}">subtítulos</a> · <a href="/s/${s}?overlay&show=es">overlay OBS</a> · <a href="${mic(s)}">micrófono</a>`;
+      li.querySelector('b').textContent = s;
+      ul.append(li);
+    }
+  });
+  document.getElementById('f').onsubmit = e => {
+    e.preventDefault();
+    location.href = mic(document.getElementById('sid').value, document.getElementById('lang').value.trim());
+  };
+</script>
+</body>
+</html>

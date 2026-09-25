@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Micrófono de sala</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px 16px; }
+  select, button { font: inherit; padding: 8px 12px; width: 100%; margin: 6px 0; }
+  #st { color: #888; }
+</style>
+</head>
+<body>
+<h1 id="h"></h1>
+<select id="dev"></select>
+<button id="btn">Transmitir</button>
+<p id="st">detenido</p>
+<script>
+  // Captura audio, lo convierte a PCM s16le 16 kHz y lo manda en frames de 100 ms.
+  const WORKLET = `class P extends AudioWorkletProcessor {
+    process(ins) {
+      const c = ins[0][0];
+      if (c) {
+        const b = new Int16Array(c.length);
+        for (let i = 0; i < c.length; i++) b[i] = Math.max(-1, Math.min(1, c[i])) * 0x7fff;
+        this.port.postMessage(b.buffer, [b.buffer]);
+      }
+      return true;
+    }
+  }
+  registerProcessor('pcm', P);`;
+  const sid = location.pathname.split('/').pop();
+  const $dev = document.getElementById('dev'), $btn = document.getElementById('btn'), $st = document.getElementById('st');
+  document.getElementById('h').textContent = 'Sala: ' + sid;
+  let ctx, stream, ws, stopped = true;
+
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(s => { s.getTracks().forEach(t => t.stop()); return navigator.mediaDevices.enumerateDevices(); })
+    .then(ds => ds.filter(d => d.kind === 'audioinput').forEach(d => $dev.add(new Option(d.label || d.deviceId, d.deviceId))))
+    .catch(e => $st.textContent = 'sin acceso al micrófono: ' + e.message);
+
+  function open() {
+    if (stopped) return;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ingest/${sid}${location.search}`);
+    ws.onopen = () => $st.textContent = '● transmitiendo';
+    ws.onclose = () => { if (!stopped) { $st.textContent = 'reconectando…'; setTimeout(open, 1000); } };
+  }
+
+  function stop() {
+    stopped = true;
+    ws?.close(); ctx?.close(); stream?.getTracks().forEach(t => t.stop());
+    $btn.textContent = 'Transmitir'; $st.textContent = 'detenido';
+  }
+
+  $btn.onclick = async () => {
+    if (!stopped) return stop();
+    stopped = false;
+    $btn.textContent = 'Detener';
+    stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      deviceId: $dev.value ? { exact: $dev.value } : undefined,
+      channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true,
+    }});
+    ctx = new AudioContext({ sampleRate: 16000 });  // Chrome/Edge remuestrean solos
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+    const node = new AudioWorkletNode(ctx, 'pcm');
+    ctx.createMediaStreamSource(stream).connect(node);
+    node.connect(ctx.destination);  // no emite sonido, pero mantiene vivo el nodo
+    let pending = [], n = 0;
+    node.port.onmessage = e => {
+      const p = new Int16Array(e.data);
+      pending.push(p); n += p.length;
+      if (n < 1600) return;
+      const out = new Int16Array(n);
+      let o = 0;
+      for (const x of pending) { out.set(x, o); o += x.length; }
+      pending = []; n = 0;
+      if (ws?.readyState === 1) ws.send(out.buffer);
+    };
+    open();
+  };
+</script>
+</body>
+</html>
